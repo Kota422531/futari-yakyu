@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1b2d">
+<title>ふたり野球</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#0f1b2d;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;overscroll-behavior:none;touch-action:manipulation;-webkit-user-select:none;user-select:none}
+button,input,select{font:inherit}
+.hide{display:none!important}
+/* lobby */
+#lobby{min-height:100%;display:flex;flex-direction:column;align-items:center;padding:28px 20px calc(28px + env(safe-area-inset-bottom));gap:14px}
+#lobby h1{font-size:34px;margin:12px 0 0;letter-spacing:.04em}
+#lobby .lead{margin:0 0 6px;color:#9fb3cc;font-size:14px}
+.card{width:100%;max-width:400px;background:#17263d;border:1px solid #26395a;border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.card h2{font-size:15px;margin:0;color:#ffd24a}
+.row{display:flex;gap:8px;align-items:center}
+.btn{border:0;border-radius:12px;padding:14px 16px;font-weight:700;font-size:16px;color:#0f1b2d;background:#ffd24a;width:100%}
+.btn:active{transform:scale(.98)}
+.btn.sub{background:#2b4166;color:#fff}
+.btn:disabled{opacity:.4}
+input.code{flex:1;min-width:0;border-radius:12px;border:1px solid #3a5380;background:#0f1b2d;color:#fff;padding:13px;font-size:22px;letter-spacing:.3em;text-align:center}
+select{border-radius:10px;border:1px solid #3a5380;background:#0f1b2d;color:#fff;padding:10px}
+.bigcode{font-size:52px;font-weight:800;letter-spacing:.2em;text-align:center;color:#ffd24a}
+.note{font-size:13px;color:#9fb3cc;line-height:1.6;margin:0}
+#lobbyMsg{color:#ff9d8a;font-size:14px;min-height:20px;text-align:center}
+ol.how{margin:0;padding-left:20px;font-size:13px;color:#c9d6e8;line-height:1.7}
+/* game */
+#game{height:100dvh;display:flex;flex-direction:column}
+#sb{display:flex;gap:10px;align-items:center;padding:calc(6px + env(safe-area-inset-top)) 10px 6px;background:#0b1422;border-bottom:2px solid #26395a}
+#sb table{border-collapse:collapse;font-size:13px;flex:1;font-variant-numeric:tabular-nums}
+#sb td,#sb th{padding:2px 5px;text-align:center;font-weight:600}
+#sb th{color:#7f95b3;font-weight:500;font-size:11px}
+#sb td.nm{text-align:left;white-space:nowrap}
+#sb tr.bat td.nm{color:#ffd24a}
+#sb td.r{font-size:17px;font-weight:800;color:#ffd24a;border-left:1px solid #26395a}
+#sb td.now{background:#22375a;border-radius:4px}
+#cnt{display:flex;flex-direction:column;gap:2px;font-size:11px;font-weight:700}
+#cnt div{display:flex;align-items:center;gap:3px}
+#cnt i{width:9px;height:9px;border-radius:50%;background:#26395a;display:inline-block}
+#cnt .b i.on{background:#39d353}#cnt .s i.on{background:#ffd24a}#cnt .o i.on{background:#ff5a4f}
+#wrap{flex:1;position:relative;min-height:0}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+#toast{position:absolute;left:0;right:0;top:26%;text-align:center;pointer-events:none;opacity:0;transition:opacity .15s}
+#toast.on{opacity:1}
+#toast b{display:inline-block;font-size:40px;font-weight:900;padding:6px 18px;border-radius:14px;background:rgba(11,20,34,.85);text-shadow:0 2px 0 #000;color:#fff}
+#toast b.good{color:#ffd24a}#toast b.bad{color:#ff7a70}
+#toast span{display:block;margin-top:8px;font-size:18px;font-weight:800;text-shadow:0 2px 4px #000}
+#info{position:absolute;left:8px;top:8px;font-size:12px;font-weight:700;background:rgba(11,20,34,.7);padding:5px 9px;border-radius:999px;pointer-events:none}
+#net{position:absolute;left:10px;right:10px;bottom:10px;background:#7a1f1f;border-radius:12px;padding:10px 12px;font-size:13px;display:flex;gap:8px;align-items:center}
+#net button{border:0;border-radius:8px;padding:8px 12px;font-weight:700;background:#fff;color:#7a1f1f;white-space:nowrap}
+#ctl{background:#0b1422;border-top:2px solid #26395a;padding:10px 10px calc(10px + env(safe-area-inset-bottom));min-height:128px;display:flex;flex-direction:column;gap:8px;justify-content:center}
+#ctl .types{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+#ctl .types button{border:2px solid #2b4166;background:#17263d;color:#fff;border-radius:10px;padding:9px 0;font-size:12px;font-weight:700;line-height:1.3}
+#ctl .types button small{display:block;font-weight:500;color:#8fa6c6;font-size:10px}
+#ctl .types button.sel{border-color:#ffd24a;background:#3a3312;color:#ffd24a}
+#ctl p{margin:0;text-align:center;font-size:15px;font-weight:700;color:#c9d6e8;line-height:1.6}
+#ctl p small{display:block;font-weight:500;color:#8fa6c6;font-size:12px}
+#modal{position:fixed;inset:0;background:rgba(5,10,18,.94);display:flex;align-items:center;justify-content:center;padding:24px;z-index:10}
+#modal .card{text-align:center;gap:14px}
+#modal h3{margin:0;font-size:24px}
+#modal .fs{font-size:44px;font-weight:900;color:#ffd24a;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+
+<div id="lobby">
+  <h1>⚾ ふたり野球</h1>
+  <p class="lead">スマホで遊ぶ 2人対戦の野球ゲーム</p>
+
+  <div class="card" id="cardHost">
+    <h2>2台で対戦(部屋をつくる)</h2>
+    <div class="row"><span class="note">イニング数</span>
+      <select id="inn"><option value="3" selected>3回</option><option value="5">5回</option><option value="9">9回</option></select>
+    </div>
+    <button class="btn" id="btnHost">部屋をつくる(先攻)</button>
+  </div>
+
+  <div class="card hide" id="cardWait">
+    <h2>相手を待っています…</h2>
+    <div class="bigcode" id="bigcode">----</div>
+    <p class="note">相手のスマホで同じページを開き、この4桁の番号を入れて「参加する」を押してもらってください。</p>
+    <button class="btn sub hide" id="btnShare">招待リンクを送る</button>
+    <button class="btn sub" id="btnCancel">やめる</button>
+  </div>
+
+  <div class="card" id="cardJoin">
+    <h2>2台で対戦(部屋に入る)</h2>
+    <div class="row">
+      <input class="code" id="code" inputmode="numeric" maxlength="4" placeholder="0000">
+    </div>
+    <button class="btn" id="btnJoin">参加する(後攻)</button>
+  </div>
+
+  <div class="card" id="cardLocal">
+    <h2>1台で対戦</h2>
+    <p class="note">1台のスマホを交互に渡して遊びます。通信なしで動きます。</p>
+    <button class="btn sub" id="btnLocal">1台で対戦する</button>
+  </div>
+
+  <div id="lobbyMsg"></div>
+
+  <div class="card">
+    <h2>遊び方</h2>
+    <ol class="how">
+      <li><b>投手</b>:球種を選び、コースのマスをタップして「投げる」。</li>
+      <li><b>打者</b>:ボールが来る場所を、来た瞬間にタップしてスイング。</li>
+      <li>タイミングと位置が合うほど長打に。枠の外の球は見送ればボール。</li>
+      <li>3アウトで攻守交代。規定の回が終わって得点の多い方が勝ち。</li>
+    </ol>
+  </div>
+</div>
+
+<div id="game" class="hide">
+  <div id="sb">
+    <table id="line"></table>
+    <svg id="bases" width="46" height="40" viewBox="0 0 46 40"></svg>
+    <div id="cnt"></div>
+  </div>
+  <div id="wrap">
+    <canvas id="cv"></canvas>
+    <div id="info"></div>
+    <div id="toast"><b></b><span></span></div>
+    <div id="net" class="hide"><span id="netTxt" style="flex:1"></span><button id="btnRe" class="hide">再接続</button></div>
+  </div>
+  <div id="ctl"></div>
+</div>
+
+<div id="modal" class="hide"><div class="card" id="modalBody"></div></div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const PREFIX='futari-yakyu-v1-';
+
+/* ---------- 球種 ---------- */
+const PITCHES={
+  st:{name:'ストレート',sub:'速い',dur:750,bx:0,by:-0.1},
+  sl:{name:'スライダー',sub:'横に曲がる',dur:900,bx:1.0,by:0.2},
+  fk:{name:'フォーク',sub:'落ちる',dur:880,bx:0,by:1.3},
+  cv:{name:'カーブ',sub:'遅く大きく',dur:1100,bx:0.6,by:1.0},
+  ch:{name:'チェンジ',sub:'遅い',dur:1180,bx:0,by:0.3}
+};
+const TW=140;   // タイミングの許容(ms)
+const DW=1.6;   // 位置の許容(マス)
+
+/* ---------- 試合の状態(純粋なロジック) ---------- */
+function newState(innings){
+  return {innings,inning:1,half:0,outs:0,balls:0,strikes:0,bases:[0,0,0],score:[0,0],line:[[0],[]],over:false,winner:null};
+}
+function applyEvent(s,ev){
+  const bat=s.half; let main='',cls='',sub=[];
+  const score=n=>{if(n>0){s.score[bat]+=n;s.line[bat][s.inning-1]=(s.line[bat][s.inning-1]||0)+n;sub.push(n+'点!');}};
+  const reset=()=>{s.balls=0;s.strikes=0;};
+  const out=()=>{s.outs++;reset();};
+  const advance=n=>{
+    let runs=0;const nb=[0,0,0];
+    for(let i=2;i>=0;i--) if(s.bases[i]){ if(i+n>=3) runs++; else nb[i+n]=1; }
+    if(n>=4) runs++; else nb[n-1]=1;
+    s.bases=nb; reset(); score(runs);
+  };
+  switch(ev){
+    case 'look': case 'miss':
+      s.strikes++;
+      if(s.strikes>=3){main=ev==='miss'?'空振り三振!':'見逃し三振!';cls='bad';out();}
+      else main='ストライク!';
+      break;
+    case 'ball':
+      s.balls++;
+      if(s.balls>=4){
+        main='フォアボール';const b=s.bases;let r=0;
+        if(b[0]){ if(b[1]){ if(b[2]) r=1; b[2]=1; } b[1]=1; } b[0]=1;
+        reset(); score(r);
+      } else main='ボール';
+      break;
+    case 'foul': if(s.strikes<2) s.strikes++; main='ファウル'; break;
+    case 'go': main='ゴロ アウト';cls='bad';out();break;
+    case 'fo': main='フライ アウト';cls='bad';out();break;
+    case 'h1': main='ヒット!';cls='good';advance(1);break;
+    case 'h2': main='ツーベース!';cls='good';advance(2);break;
+    case 'h3': main='スリーベース!';cls='good';advance(3);break;
+    case 'hr': main='ホームラン!!';cls='good';advance(4);break;
+  }
+  let changed=false;
+  const last=s.inning>=s.innings;
+  if(s.half===1&&last&&s.score[1]>s.score[0]){ s.over=true; sub.push('サヨナラ!'); }
+  else if(s.outs>=3){
+    changed=true; s.outs=0; s.bases=[0,0,0]; reset();
+    if(s.half===0){
+      if(last&&s.score[1]>s.score[0]) s.over=true;
+      else { s.half=1; s.line[1][s.inning-1]=0; }
+    }else{
+      if(last&&(s.score[0]!==s.score[1]||s.inning>=s.innings+3)) s.over=true;
+      else { s.inning++; s.half=0; s.line[0][s.inning-1]=0; }
+    }
+    sub.push(s.over?'試合終了':'チェンジ');
+  }
+  if(s.over) s.winner=s.score[0]===s.score[1]?-1:(s.score[0]>s.score[1]?0:1);
+  return {main,cls,sub:sub.join(' '),changed,over:s.over};
+}
+function judge(p,sw){
+  const inZone=Math.abs(p.fx)<=1.65&&Math.abs(p.fy)<=1.65;
+  if(!sw) return inZone?'look':'ball';
+  const adt=Math.abs(sw.dt),d=Math.hypot(sw.x-p.fx,sw.y-p.fy);
+  if(adt>TW||d>DW) return 'miss';
+  let q=1-(0.55*adt/TW+0.45*d/DW); if(!inZone) q*=0.6;
+  const r=Math.random();
+  const pick=t=>{let a=0;for(const [k,v] of t){a+=v;if(r<a)return k;}return t[t.length-1][0];};
+  if(q<0.2)  return pick([['foul',.7],['go',.3]]);
+  if(q<0.42) return pick([['go',.3],['fo',.25],['foul',.25],['h1',.2]]);
+  if(q<0.64) return pick([['h1',.42],['go',.18],['fo',.17],['h2',.15],['foul',.08]]);
+  if(q<0.82) return pick([['h1',.33],['h2',.3],['hr',.14],['fo',.15],['h3',.08]]);
+  return pick([['hr',.5],['h2',.25],['h1',.15],['h3',.05],['fo',.05]]);
+}
+
+/* ---------- 変数 ---------- */
+let mode=null;      // 'net' | 'local'
+let me=0;           // 0=先攻(ホスト) 1=後攻(ゲスト)
+let state=null, phase='idle', cur=null;
+let sel={type:'st',cell:null};
+let peer=null, conn=null, roomCode='', netOK=false, inGame=false;
+let marks=null;     // 直前の投球の表示
+let nextTimer=null;
+
+const iBat=()=>mode==='local'||state.half===me;
+const iPitch=()=>mode==='local'||state.half!==me;
+
+/* ---------- 通信 ---------- */
+function lobbyMsg(t){$('lobbyMsg').textContent=t||'';}
+function send(o){ if(mode==='net'&&conn&&conn.open){ try{conn.send(o);}catch(e){} } }
+function hostRoom(){
+  if(!window.Peer){lobbyMsg('通信用の部品を読み込めませんでした。ネット接続を確認して開き直してください。');return;}
+  mode='net';me=0;state=null;
+  roomCode=String(Math.floor(1000+Math.random()*9000));
+  lobbyMsg('部屋を準備中…');
+  peer=new Peer(PREFIX+roomCode);
+  peer.on('open',()=>{
+    lobbyMsg('');$('bigcode').textContent=roomCode;
+    ['cardHost','cardJoin','cardLocal'].forEach(i=>$(i).classList.add('hide'));
+    $('cardWait').classList.remove('hide');
+    if(navigator.share&&location.protocol.startsWith('http')) $('btnShare').classList.remove('hide');
+  });
+  peer.on('connection',c=>{ if(conn&&conn!==c){try{conn.close();}catch(e){}} bind(c); });
+  peer.on('disconnected',()=>{try{peer.reconnect();}catch(e){}});
+  peer.on('error',e=>{
+    if(e.type==='unavailable-id'){peer.destroy();hostRoom();}
+    else if(!inGame) lobbyMsg('接続エラー:'+e.type);
+  });
+}
+function joinRoom(code){
+  if(!window.Peer){lobbyMsg('通信用の部品を読み込めませんでした。ネット接続を確認して開き直してください。');return;}
+  if(!/^\d{4}$/.test(code)){lobbyMsg('4桁の番号を入れてください');return;}
+  mode='net';me=1;roomCode=code;
+  if(!inGame) lobbyMsg('接続中…');
+  if(peer){try{peer.destroy();}catch(e){}}
+  peer=new Peer();
+  peer.on('open',()=>bind(peer.connect(PREFIX+code,{reliable:true})));
+  peer.on('disconnected',()=>{try{peer.reconnect();}catch(e){}});
+  peer.on('error',e=>{
+    const m=e.type==='peer-unavailable'?'その番号の部屋が見つかりません':'接続エラー:'+e.type;
+    if(inGame) setNet(false,m); else lobbyMsg(m);
+  });
+}
+function bind(c){
+  conn=c;
+  const opened=()=>{
+    if(me===0){
+      if(!state) state=newState(+$('inn').value);
+      resetPitch();
+      send({t:'sync',state});
+      if(!inGame) startGame(); else render();
+    }
+    setNet(true);
+  };
+  if(c.open) opened(); else c.on('open',opened);
+  c.on('data',onData);
+  c.on('close',()=>{ if(conn===c) setNet(false); });
+  c.on('error',()=>{ if(conn===c) setNet(false); });
+}
+function setNet(ok,msg){
+  netOK=ok;
+  if(!inGame) return;
+  $('net').classList.toggle('hide',ok);
+  if(!ok){
+    $('netTxt').textContent=msg||(me===0?'相手との接続が切れました。相手が同じ番号('+roomCode+')で入り直すと再開します。':'接続が切れました。');
+    $('btnRe').classList.toggle('hide',me===0);
+  }
+}
+function onData(m){
+  if(!m||!m.t) return;
+  if(m.t==='sync'){
+    state=m.state; resetPitch(); $('modal').classList.add('hide');
+    if(!inGame) startGame(); else { render(); if(state.over) showOver(); }
+  }else if(m.t==='pitch'){
+    if(phase!=='select'||!iBat()) return;
+    startPitch(m.p);
+  }else if(m.t==='result'){
+    state=m.state; showResult(m.ev,m.swing,m.res);
+  }
+}
+
+/* ---------- 進行 ---------- */
+function resetPitch(){ clearTimeout(nextTimer); phase='select'; cur=null; marks=null; sel.cell=null; toast(); }
+function startGame(){
+  inGame=true;
+  $('lobby').classList.add('hide'); $('game').classList.remove('hide'); $('modal').classList.add('hide');
+  resetPitch(); layout(); render(); wake();
+  if(mode==='net') setNet(netOK||!!(conn&&conn.open));
+  if(state.over) showOver();
+}
+function throwPitch(){
+  if(phase!=='select'||!iPitch()||sel.cell==null) return;
+  if(mode==='net'&&!(conn&&conn.open)) return;
+  const col=sel.cell%5-2,row=Math.floor(sel.cell/5)-2;
+  const p={type:sel.type,fx:col+(Math.random()-.5)*.8,fy:row+(Math.random()-.5)*.8,delay:900+Math.random()*900};
+  sel.cell=null;
+  if(mode==='local'){
+    phase='handover'; render();
+    modal('<h3>打者に交代</h3><p class="note">スマホを打者に渡してください。<br>打者が準備できたら下のボタンを押すと投球が始まります。</p><button class="btn" id="mOK">準備OK(打者が押す)</button>');
+    $('mOK').onclick=()=>{$('modal').classList.add('hide');startPitch(p);};
+  }else{
+    send({t:'pitch',p}); startPitch(p);
+  }
+}
+function startPitch(p){
+  const now=performance.now();
+  cur={p,t0:now+p.delay,dur:PITCHES[p.type].dur,swing:null,resolved:false,fly:null};
+  marks=null; phase='pitching'; toast(); render();
+}
+function swingAt(x,y){
+  if(phase!=='pitching'||!cur||cur.resolved||cur.swing) return;
+  if(mode==='net'&&!iBat()) return;
+  const dt=performance.now()-(cur.t0+cur.dur);
+  cur.swing={x,y,dt};
+  beep(180,.06,'sawtooth',.05);
+  resolve(judge(cur.p,cur.swing));
+}
+function resolve(ev){
+  cur.resolved=true;
+  const res=applyEvent(state,ev);
+  send({t:'result',ev,swing:cur.swing,state,res});
+  showResult(ev,cur.swing,res);
+}
+function showResult(ev,swing,res){
+  phase='result';
+  const now=performance.now();
+  if(cur){
+    cur.resolved=true; cur.swing=swing;
+    marks={fx:cur.p.fx,fy:cur.p.fy,swing,type:cur.p.type};
+    if(['foul','go','fo','h1','h2','h3','hr'].includes(ev)){
+      const side=Math.random()<.5?-1:1;
+      const from={x:G.cx+cur.p.fx*G.c,y:G.cy+cur.p.fy*G.c};
+      let to,dur=700;
+      if(ev==='foul') to={x:G.cx+side*G.W*.7,y:G.H*.35};
+      else if(ev==='go') to={x:G.cx+side*G.W*.2,y:G.H*.28};
+      else if(ev==='hr'){to={x:G.cx+side*G.W*.25,y:-60};dur=1100;}
+      else to={x:G.cx+(Math.random()-.5)*G.W*.7,y:G.H*(ev==='fo'?.14:.08)};
+      cur.fly={from,to,t0:now,dur,ev};
+    }
+  }
+  let sub=res.sub;
+  if(swing&&(ev==='miss'||ev==='foul')){
+    const tip=Math.abs(swing.dt)>TW*.6?(swing.dt<0?'振りが早い':'振り遅れ'):'';
+    if(tip) sub=(sub?sub+' ':'')+'('+tip+')';
+  }
+  toast(res.main,res.cls,sub);
+  if(res.cls==='good'){beep(520,.09,'square');setTimeout(()=>beep(780,.16,'square'),90);if(navigator.vibrate)navigator.vibrate(ev==='hr'?[60,40,120]:50);}
+  else if(ev==='foul'||ev==='go'||ev==='fo') beep(300,.08,'square');
+  else beep(ev==='ball'?240:150,.12,'triangle');
+  render();
+  clearTimeout(nextTimer);
+  nextTimer=setTimeout(()=>{
+    toast(); cur=null;
+    if(state.over){phase='over';render();showOver();}
+    else{phase='select';render();}
+  },ev==='hr'||res.changed?2100:1500);
+}
+function showOver(){
+  phase='over';
+  const s=state,w=s.winner;
+  let t;
+  if(w===-1) t='引き分け';
+  else if(mode==='net') t=w===me?'あなたの勝ち!🎉':'あなたの負け…';
+  else t=(w===0?'先攻':'後攻')+'の勝ち!🎉';
+  modal('<h3>試合終了</h3><div class="fs">'+s.score[0]+' - '+s.score[1]+'</div><p class="note">先攻 - 後攻</p><h3>'+t+'</h3><button class="btn" id="mAgain">もう一度あそぶ</button><button class="btn sub" id="mQuit">タイトルへ</button>');
+  $('mAgain').onclick=()=>{
+    state=newState(s.innings); $('modal').classList.add('hide'); resetPitch(); send({t:'sync',state}); render();
+  };
+  $('mQuit').onclick=()=>location.reload();
+}
+
+/* ---------- 画面 ---------- */
+function modal(html){$('modalBody').innerHTML=html;$('modal').classList.remove('hide');}
+function toast(main,cls,sub){
+  const t=$('toast');
+  if(!main){t.classList.remove('on');return;}
+  t.firstElementChild.textContent=main; t.firstElementChild.className=cls||'';
+  t.lastElementChild.textContent=sub||''; t.classList.add('on');
+}
+function render(){
+  if(!state||!inGame) return;
+  const s=state,n=Math.max(s.innings,s.inning);
+  let h='<tr><th></th>';
+  for(let i=1;i<=n;i++) h+='<th>'+i+'</th>';
+  h+='<th>計</th></tr>';
+  for(let t=0;t<2;t++){
+    const nm=(t===0?'先攻':'後攻')+(mode==='net'&&t===me?'(あなた)':'');
+    h+='<tr class="'+(!s.over&&s.half===t?'bat':'')+'"><td class="nm">'+(!s.over&&s.half===t?'▶':'　')+nm+'</td>';
+    for(let i=0;i<n;i++){
+      const v=s.line[t][i];
+      h+='<td class="'+(!s.over&&s.half===t&&s.inning===i+1?'now':'')+'">'+(v==null?'':v)+'</td>';
+    }
+    h+='<td class="r">'+s.score[t]+'</td></tr>';
+  }
+  $('line').innerHTML=h;
+  const dots=(c,n,max)=>{let o='';for(let i=0;i<max;i++)o+='<i class="'+(i<n?'on':'')+'"></i>';return '<div class="'+c+'">'+c.toUpperCase()+' '+o+'</div>';};
+  $('cnt').innerHTML=dots('b',s.balls,3)+dots('s',s.strikes,2)+dots('o',s.outs,2);
+  const base=(x,y,on)=>'<rect x="'+(x-6)+'" y="'+(y-6)+'" width="12" height="12" transform="rotate(45 '+x+' '+y+')" fill="'+(on?'#ffd24a':'#26395a')+'" stroke="#4a6592"/>';
+  $('bases').innerHTML=base(23,10,s.bases[1])+base(36,23,s.bases[0])+base(10,23,s.bases[2]);
+  $('info').textContent=s.inning+'回'+(s.half===0?'表':'裏')+(mode==='net'?(iBat()?'|あなたは打者':'|あなたは投手'):'');
+
+  const c=$('ctl');
+  const who=t=>t===0?'先攻':'後攻';
+  if(phase==='select'&&iPitch()){
+    let b='<div class="types">';
+    for(const k in PITCHES) b+='<button data-k="'+k+'" class="'+(sel.type===k?'sel':'')+'">'+PITCHES[k].name+'<small>'+PITCHES[k].sub+'</small></button>';
+    b+='</div><button class="btn" id="btnThrow" '+(sel.cell==null?'disabled':'')+'>'+(sel.cell==null?'コースのマスをタップ':'投げる!')+'</button>';
+    if(mode==='local') b='<p style="font-size:12px"><small>投手('+who(1-s.half)+')の番です。打者は画面を見ないで!</small></p>'+b;
+    c.innerHTML=b;
+    c.querySelectorAll('.types button').forEach(x=>x.onclick=()=>{sel.type=x.dataset.k;render();});
+    $('btnThrow').onclick=throwPitch;
+  }else if(phase==='select'){
+    c.innerHTML='<p>相手が配球を考えています…<small>ボールが来たら、来る場所をタップしてスイング!</small></p>';
+  }else if(phase==='pitching'){
+    c.innerHTML=(mode==='net'&&!iBat())?'<p>投球中…</p>':'<p>ボールの来る場所をタップ!<small>枠の外の球は触らずに見送り</small></p>';
+  }else c.innerHTML='<p>　</p>';
+}
+
+/* ---------- 描画 ---------- */
+const cv=$('cv'),ctx=cv.getContext('2d');
+const G={W:0,H:0,c:0,cx:0,cy:0,rx:0,ry:0};
+function layout(){
+  const r=$('wrap').getBoundingClientRect(),d=window.devicePixelRatio||1;
+  if(!r.width||!r.height) return;
+  cv.width=Math.round(r.width*d);cv.height=Math.round(r.height*d);
+  ctx.setTransform(d,0,0,d,0,0);
+  G.W=r.width;G.H=r.height;
+  G.c=Math.min(G.W*.92/5,G.H*.6/5);
+  G.cx=G.W/2;G.cy=G.H*.62;G.rx=G.W/2;G.ry=G.H*.13;
+}
+window.addEventListener('resize',layout);
+function ballAt(t){
+  const P=PITCHES[cur.p.type],k=1.5,z=1-t;
+  const f=(1/(1+k*z)-1/(1+k))/(1-1/(1+k));
+  const fx=G.cx+cur.p.fx*G.c,fy=G.cy+cur.p.fy*G.c,bx=P.bx*G.c,by=P.by*G.c;
+  return {x:G.rx+(fx-bx-G.rx)*f+bx*f*f,y:G.ry+(fy-by-G.ry)*f+by*f*f,r:G.c*(.07+.22*f)};
+}
+function drawBall(x,y,r,a){
+  ctx.globalAlpha=a==null?1:a;
+  ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fillStyle='#fff';ctx.fill();
+  ctx.lineWidth=Math.max(1,r*.12);ctx.strokeStyle='#d33';
+  ctx.beginPath();ctx.arc(x-r*1.1,y,r*.9,-.7,.7);ctx.stroke();
+  ctx.beginPath();ctx.arc(x+r*1.1,y,r*.9,Math.PI-.7,Math.PI+.7);ctx.stroke();
+  ctx.globalAlpha=1;
+}
+function draw(){
+  requestAnimationFrame(draw);
+  if(!inGame||!G.W) return;
+  const {W,H,c,cx,cy}=G,now=performance.now();
+  // グラウンド
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#2f8f4e');g.addColorStop(1,'#1f6e3a');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(255,255,255,.04)';
+  for(let i=0;i<8;i+=2) ctx.fillRect(0,H*i/8,W,H/8);
+  ctx.fillStyle='#b98654';
+  ctx.beginPath();ctx.ellipse(cx,G.ry+c*.5,c*1.1,c*.35,0,0,7);ctx.fill();
+  ctx.beginPath();ctx.ellipse(cx,H+c*.4,W*.75,c*2.2,0,0,7);ctx.fill();
+  // 投手
+  const wind=cur&&phase==='pitching'&&now<cur.t0;
+  const lift=wind?Math.min(1,(1-(cur.t0-now)/cur.p.delay)*1.2):0;
+  ctx.fillStyle='#f4f4f4';ctx.fillRect(cx-c*.13,G.ry-c*.05,c*.26,c*.5);
+  ctx.fillStyle='#1d3557';ctx.beginPath();ctx.arc(cx,G.ry-c*.2,c*.15,0,7);ctx.fill();
+  ctx.strokeStyle='#f4f4f4';ctx.lineWidth=c*.08;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(cx+c*.13,G.ry+c*.05);ctx.lineTo(cx+c*.35,G.ry+c*.05-lift*c*.45);ctx.stroke();
+  // ゾーン
+  const showGrid=phase==='select'&&iPitch();
+  ctx.fillStyle='rgba(0,0,0,.14)';ctx.fillRect(cx-c*1.5,cy-c*1.5,c*3,c*3);
+  if(showGrid){
+    ctx.strokeStyle='rgba(255,255,255,.28)';ctx.lineWidth=1;ctx.setLineDash([4,4]);
+    for(let i=0;i<=5;i++){
+      ctx.beginPath();ctx.moveTo(cx-c*2.5+i*c,cy-c*2.5);ctx.lineTo(cx-c*2.5+i*c,cy+c*2.5);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(cx-c*2.5,cy-c*2.5+i*c);ctx.lineTo(cx+c*2.5,cy-c*2.5+i*c);ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    if(sel.cell!=null){
+      const col=sel.cell%5,row=Math.floor(sel.cell/5);
+      ctx.fillStyle='rgba(255,210,74,.55)';ctx.fillRect(cx-c*2.5+col*c,cy-c*2.5+row*c,c,c);
+    }
+    ctx.fillStyle='rgba(255,255,255,.75)';ctx.font='600 '+Math.round(c*.2)+'px sans-serif';ctx.textAlign='center';
+    ctx.fillText('白枠の中=ストライク / 外=ボール',cx,cy-c*2.62);
+  }
+  ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.strokeRect(cx-c*1.5,cy-c*1.5,c*3,c*3);
+  // ホームベース
+  ctx.fillStyle='#fff';ctx.beginPath();
+  const hy=cy+c*2.75;ctx.moveTo(cx-c*.5,hy);ctx.lineTo(cx+c*.5,hy);ctx.lineTo(cx+c*.5,hy+c*.25);ctx.lineTo(cx,hy+c*.5);ctx.lineTo(cx-c*.5,hy+c*.25);ctx.closePath();ctx.fill();
+  // 直前の投球の跡
+  if(marks){
+    ctx.lineWidth=3;ctx.strokeStyle='rgba(255,255,255,.9)';
+    ctx.beginPath();ctx.arc(cx+marks.fx*c,cy+marks.fy*c,c*.29,0,7);ctx.stroke();
+    if(marks.swing){
+      ctx.strokeStyle='#ffd24a';const sx=cx+marks.swing.x*c,sy=cy+marks.swing.y*c,q=c*.22;
+      ctx.beginPath();ctx.moveTo(sx-q,sy-q);ctx.lineTo(sx+q,sy+q);ctx.moveTo(sx+q,sy-q);ctx.lineTo(sx-q,sy+q);ctx.stroke();
+    }
+    ctx.fillStyle='#fff';ctx.font='700 '+Math.round(c*.24)+'px sans-serif';ctx.textAlign='center';
+    ctx.fillText(PITCHES[marks.type].name,cx,cy+c*2.45);
+  }
+  // ボール
+  if(cur){
+    if(cur.fly){
+      const u=Math.min(1,(now-cur.fly.t0)/cur.fly.dur),f=cur.fly;
+      const arc=(f.ev==='go')?0:Math.sin(u*Math.PI)*c*.6;
+      drawBall(f.from.x+(f.to.x-f.from.x)*u,f.from.y+(f.to.y-f.from.y)*u-arc,c*(.29-.2*u),u>.9?(1-u)*10:1);
+    }else if(now>=cur.t0){
+      const t=(now-cur.t0)/cur.dur;
+      if(t<=1.12){const b=ballAt(Math.min(t,1.12));drawBall(b.x,b.y,b.r,t>1?Math.max(0,1-(t-1)*8):1);}
+    }
+    // 見送りの判定(打者側のみ)
+    if(phase==='pitching'&&!cur.resolved&&(mode==='local'||iBat())&&now>cur.t0+cur.dur+TW+40) resolve(judge(cur.p,null));
+  }
+}
+cv.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  if(!inGame||!state) return;
+  const r=cv.getBoundingClientRect(),x=(e.clientX-r.left-G.cx)/G.c,y=(e.clientY-r.top-G.cy)/G.c;
+  if(phase==='select'&&iPitch()){
+    const col=Math.floor(x+2.5),row=Math.floor(y+2.5);
+    if(col>=0&&col<5&&row>=0&&row<5){sel.cell=row*5+col;beep(660,.03,'sine',.04);render();}
+  }else if(phase==='pitching'){
+    swingAt(x,y);
+  }
+});
+
+/* ---------- その他 ---------- */
+let ac;
+function beep(f,d,type,v){
+  try{
+    ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+    if(ac.state==='suspended') ac.resume();
+    const o=ac.createOscillator(),g=ac.createGain();
+    o.type=type||'square';o.frequency.value=f;
+    g.gain.setValueAtTime(v||.07,ac.currentTime);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+d);
+    o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d);
+  }catch(e){}
+}
+let wl=null;
+async function wake(){try{if('wakeLock' in navigator) wl=await navigator.wakeLock.request('screen');}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&inGame) wake();});
+
+$('btnHost').onclick=hostRoom;
+$('btnJoin').onclick=()=>joinRoom($('code').value.trim());
+$('btnCancel').onclick=()=>location.reload();
+$('btnRe').onclick=()=>{$('netTxt').textContent='再接続中…';joinRoom(roomCode);};
+$('btnShare').onclick=()=>{
+  const u=location.origin+location.pathname+'?room='+roomCode;
+  navigator.share({title:'ふたり野球',text:'野球で対戦しよう!部屋番号:'+roomCode,url:u}).catch(()=>{});
+};
+$('btnLocal').onclick=()=>{mode='local';me=0;state=newState(+$('inn').value);startGame();};
+const qp=new URLSearchParams(location.search).get('room');
+if(qp&&/^\d{4}$/.test(qp)){$('code').value=qp;lobbyMsg('部屋番号 '+qp+' が入っています。「参加する」を押してください。');}
+if(typeof module==='undefined') requestAnimationFrame(draw);
+if(typeof module!=='undefined') module.exports={newState,applyEvent,judge};
+</script>
+</body>
+</html>
