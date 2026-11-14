@@ -65,6 +65,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 .pad button.on,.pad button:active{background:#ffd24a;color:#0f1b2d}
 .pad button:disabled{opacity:.35}
 .hint{font-size:11px;color:#8fa6c6;text-align:center}
+.chg{border:1px solid #3a5380;background:#22375a;color:#fff;border-radius:8px;font-size:11px;font-weight:700;padding:3px 8px;margin-right:4px}
 #sb td.nm i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
 #modal{position:fixed;inset:0;background:rgba(5,10,18,.94);display:flex;align-items:center;justify-content:center;padding:24px;z-index:10}
 #modal .card{text-align:center;gap:14px}
@@ -116,6 +117,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
       <li><b>投手</b>:◀▶で立ち位置を決め、「速球・スロー・フォーク」で投球。投げたあとも◀▶で球を左右に曲げられます。</li>
       <li><b>打者</b>:◀▶で立ち位置を動かし、タイミングよく「スイング」。バットの先寄りの芯に当てると長打。早く振ると左、遅いと右に飛びます。</li>
       <li>フォークは手前で失速し、見送ればボール。ベースの上を通る球は見送るとストライク。</li>
+      <li>選手にはパワー・ミート・走力、投手には球速・変化・スタミナの個性があります。投手は疲れると球威が落ちるので「投手交代」で1回だけリリーフを出せます。</li>
       <li>打ったあとの守備と走塁は自動です。3アウトで攻守交代。</li>
     </ol>
   </div>
@@ -143,7 +145,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-const PREFIX='futari-yakyu-v2-';
+const PREFIX='futari-yakyu-v3-';
 
 /* ---------- 調整用の数値 ---------- */
 const WIND=700;      // 振りかぶり(ms)
@@ -152,16 +154,38 @@ const VMAX=3.2;      // 変化の速さ
 const RESP=9;        // 変化の効きの速さ
 const KINDS={fast:{name:'速球',T:650},slow:{name:'スロー',T:1150},fork:{name:'フォーク',T:900}};
 const BAT_MIN=-3.2,BAT_MAX=-1.6,PIT_MAX=0.8;
-const TEAM=['#e0453a','#2f6fdb'];
+const TEAMS=[
+ {name:'コメッツ',col:'#e0453a',bat:[
+  {n:'はやて',P:3,M:8,S:9,h:'L'},{n:'りく',P:4,M:7,S:7,h:'R'},{n:'だいち',P:7,M:7,S:5,h:'R'},
+  {n:'ごうた',P:10,M:4,S:2,h:'R'},{n:'てつ',P:8,M:5,S:4,h:'L'},{n:'そら',P:5,M:6,S:6,h:'R'},
+  {n:'げん',P:6,M:4,S:4,h:'R'},{n:'かい',P:3,M:6,S:8,h:'L'},{n:'じん',P:2,M:4,S:5,h:'R'}],
+  pit:[{n:'とうま',V:8,C:5,ST:7},{n:'しの',V:5,C:9,ST:4}]},
+ {name:'シャークス',col:'#2f6fdb',bat:[
+  {n:'なぎ',P:3,M:9,S:8,h:'R'},{n:'しょう',P:5,M:7,S:7,h:'L'},{n:'れん',P:8,M:6,S:5,h:'R'},
+  {n:'まさ',P:9,M:5,S:3,h:'L'},{n:'たく',P:7,M:6,S:4,h:'R'},{n:'こう',P:5,M:5,S:7,h:'R'},
+  {n:'ゆう',P:4,M:7,S:6,h:'L'},{n:'けん',P:6,M:3,S:4,h:'R'},{n:'あお',P:2,M:5,S:6,h:'R'}],
+  pit:[{n:'みなと',V:6,C:8,ST:8},{n:'ごう',V:9,C:4,ST:4}]}
+];
+const TEAM=TEAMS.map(t=>t.col);
+const batterOf=s=>TEAMS[s.half].bat[s.bi[s.half]];
+const pitcherOf=s=>TEAMS[1-s.half].pit[s.pi[1-s.half]];
+function pitchParams(s,kind,rnd){ // 投手の能力と疲れを球に反映
+  const t=1-s.half,pt=pitcherOf(s),cap=35+pt.ST*7;
+  const st=Math.max(0,1-s.pc[t]/cap),fat=st<.4?(.4-st)/.4:0;
+  const r=(rnd||Math.random)();
+  const base=kind==='fast'?122+pt.V*3.5:kind==='slow'?86+pt.V*1.5:112+pt.V*2.5;
+  return {T:Math.round(KINDS[kind].T*(1.13-.025*pt.V)*(1+.22*fat)),vmax:(2.3+.17*pt.C)*(1-.35*fat),kmh:Math.round(base-fat*12+r*4),st};
+}
 
 /* ---------- 試合の状態(純粋なロジック) ---------- */
 function newState(innings){
-  return {innings,inning:1,half:0,outs:0,balls:0,strikes:0,bases:[0,0,0],score:[0,0],line:[[0],[]],over:false,winner:null};
+  return {innings,inning:1,half:0,outs:0,balls:0,strikes:0,bases:[0,0,0],score:[0,0],line:[[0],[]],bi:[0,0],pc:[0,0],pi:[0,0],over:false,winner:null};
 }
 function applyEvent(s,ev){
-  const bat=s.half; let main='',cls='',sub=[];
+  const bat=s.half; let main='',cls='',sub=[],paEnd=false;
+  s.pc[1-bat]++;
   const score=n=>{if(n>0){s.score[bat]+=n;s.line[bat][s.inning-1]=(s.line[bat][s.inning-1]||0)+n;sub.push(n+'点!');}};
-  const reset=()=>{s.balls=0;s.strikes=0;};
+  const reset=()=>{s.balls=0;s.strikes=0;paEnd=true;};
   const out=()=>{s.outs++;reset();};
   const walk=()=>{const b=s.bases;let r=0;if(b[0]){if(b[1]){if(b[2])r=1;b[2]=1;}b[1]=1;}b[0]=1;reset();score(r);};
   const advance=n=>{
@@ -186,11 +210,12 @@ function applyEvent(s,ev){
     case 'h3': main='スリーベース!';cls='good';advance(3);break;
     case 'hr': main='ホームラン!!';cls='good';advance(4);break;
   }
+  if(paEnd) s.bi[bat]=(s.bi[bat]+1)%9;
   let changed=false;
   const last=s.inning>=s.innings;
   if(s.half===1&&last&&s.score[1]>s.score[0]){ s.over=true; sub.push('サヨナラ!'); }
   else if(s.outs>=3){
-    changed=true; s.outs=0; s.bases=[0,0,0]; reset();
+    changed=true; s.outs=0; s.bases=[0,0,0]; s.balls=0; s.strikes=0;
     if(s.half===0){
       if(last&&s.score[1]>s.score[0]) s.over=true;
       else { s.half=1; s.line[1][s.inning-1]=0; }
@@ -213,49 +238,50 @@ function ballX(c,t){ // 投げてから t ms 後の横位置
   let x=c.x0,vx=0,dir=0,i=0;const st=c.steer;
   for(let s=0;s<t;s+=4){
     while(i<st.length&&st[i].tp<=s){dir=st[i].dir;i++;}
-    vx+=(dir*VMAX-vx)*Math.min(1,RESP*.004); x+=vx*.004;
+    vx+=(dir*(c.vmax||VMAX)-vx)*Math.min(1,RESP*.004); x+=vx*.004;
   }
   return x;
 }
 function addSteer(c,e){ c.steer.push(e); c.steer.sort((a,b)=>a.tp-b.tp); }
 
 /* ---------- 打撃の判定 ---------- */
-function judgePitch(c,bx,rnd){
+function judgePitch(c,bx0,b,rnd){
   rnd=rnd||Math.random;
-  const x=ballX(c,c.T);
+  const Lh=b.h==='L',x0=ballX(c,c.T),x=Lh?-x0:x0,bx=Lh?-bx0:bx0,mir=Lh?-1:1; // 左打者は左右を反転して計算
   const s=c.swingT==null?null:(c.T-c.swingT)/SW;
   if(s==null){
-    if(Math.abs(x-bx)<.55&&Math.abs(x)>1.2) return {ev:'hbp',x};
-    if(c.kind==='fork') return {ev:'ball',x};
-    return {ev:Math.abs(x)<=1.2?'look':'ball',x};
+    if(Math.abs(x-bx)<.55&&Math.abs(x)>1.2) return {ev:'hbp',x:x0};
+    if(c.kind==='fork') return {ev:'ball',x:x0};
+    return {ev:Math.abs(x)<=1.2?'look':'ball',x:x0};
   }
-  if(!(s>=.12&&s<=.95&&x>=bx+.6&&x<=bx+3.0)) return {ev:'miss',x};
-  const ang=-(s-.55)/.30*45+(rnd()-.5)*12;         // 早い=引っ張り(左)
-  if(Math.abs(ang)>45) return {ev:'foul',x,side:ang<0?-1:1};
+  const m=b.M/10;
+  if(!(s>=.12&&s<=.95&&x>=bx+.8-.3*m&&x<=bx+2.8+.3*m)) return {ev:'miss',x:x0};
+  const ang=-(s-.55)/(.25+.1*m)*45+(rnd()-.5)*12;   // 早い=引っ張り
+  if(Math.abs(ang)>45) return {ev:'foul',x:x0,side:(ang<0?-1:1)*mir};
   const d=x-(bx+2.2);                              // 芯からのずれ
   let p=d<0?1+d/1.6:1-d/.8;
-  p=Math.max(0,Math.min(1,p))*(1-.5*Math.abs(s-.55)/.4);
+  p=Math.max(0,Math.min(1,p))*(1-.5*Math.abs(s-.55)/.4)*(.78+.045*b.P);
   if(c.kind==='fork') p*=.55; if(c.kind==='fast') p*=1.08;
-  p=Math.max(0,Math.min(1.05,p+(rnd()-.5)*.24));
-  const r=rnd();
+  p=Math.max(0,Math.min(1.15,p+(rnd()-.5)*.24));
+  const r=rnd(),A=ang*mir;
   const gnd=rnd()<(c.kind==='fork'?.75:(p<.35?.7:.28));
   if(gnd){
-    if(r<.18+.3*p){
-      if(Math.abs(ang)>33&&p>.5&&rnd()<.3) return {ev:'h2',x,hit:{ang,D:84,kind:'gnd'}};
-      return {ev:'h1',x,hit:{ang,D:60+rnd()*8,kind:'gnd'}};
+    if(r<.18+.3*p+(b.S-5)*.025){
+      if(Math.abs(ang)>33&&p>.5&&rnd()<.3) return {ev:'h2',x:x0,hit:{ang:A,D:84,kind:'gnd'}};
+      return {ev:'h1',x:x0,hit:{ang:A,D:60+rnd()*8,kind:'gnd'}};
     }
-    return {ev:'go',x,hit:{ang,D:26+rnd()*12,kind:'gnd'}};
+    return {ev:'go',x:x0,hit:{ang:A,D:26+rnd()*12,kind:'gnd'}};
   }
-  const D=40+p*75+(rnd()-.5)*12;
+  const D=40+p*75+(rnd()-.5)*12,t3=.06+b.S*.012;
   let ev;
   if(D>=101) ev='hr';
-  else if(D>=86) ev=r<.5?'h2':r<.62?'h3':'fo';
+  else if(D>=86) ev=r<.56-t3?'h2':r<.56?'h3':'fo';
   else if(D>=62) ev=r<.55?'fo':r<.88?'h1':'h2';
   else ev=r<.72?'fo':'h1';
-  return {ev,x,hit:{ang,D:ev==='hr'?Math.max(D,108):Math.min(D,98),kind:'fly'}};
+  return {ev,x:x0,hit:{ang:A,D:ev==='hr'?Math.max(D,108):Math.min(D,98),kind:'fly'}};
 }
 
-if(typeof module!=='undefined'){ module.exports={newState,applyEvent,ballX,judgePitch,KINDS,SW}; }
+if(typeof module!=='undefined'){ module.exports={newState,applyEvent,ballX,judgePitch,pitchParams,KINDS,SW,TEAMS}; }
 else (function(){
 
 /* ---------- 変数 ---------- */
@@ -263,6 +289,7 @@ let mode=null;      // 'net' | 'local'
 let me=0;           // 0=先攻(ホスト) 1=後攻(ゲスト)
 let state=null, pend=null, phase='idle', cur=null, fa=null, pid=0;
 let pitX=0, batX=-2.4;
+const homeX=()=>state&&batterOf(state).h==='L'?2.4:-2.4;
 let peer=null, conn=null, roomCode='', netOK=false, inGame=false;
 let timer=null, padKey='', lastPos={pit:0,bat:0,at:0};
 const held={pit:{l:0,r:0},bat:{l:0,r:0}};
@@ -340,6 +367,8 @@ function onData(m){
   }else if(m.t==='pos'){
     if(m.r==='pit'&&!ctl('pit')) pitX=m.x;
     if(m.r==='bat'&&!ctl('bat')) batX=m.x;
+  }else if(m.t==='chg'){
+    doChange(m.team,true);
   }else if(m.t==='pitch'){
     if(phase!=='ready') flush();
     if(state.over||!ctl('bat')) return;
@@ -349,7 +378,7 @@ function onData(m){
   }else if(m.t==='swing'){
     if(cur&&cur.id===m.id&&cur.swingT==null) cur.swingT=performance.now()-cur.t0;
   }else if(m.t==='result'){
-    if(!cur||cur.id!==m.id) cur={id:m.id,kind:'fast',x0:0,t0:performance.now()-2000,T:650,steer:[],swingT:null};
+    if(!cur||cur.id!==m.id) cur={id:m.id,kind:'fast',x0:0,kmh:0,t0:performance.now()-2000,T:650,steer:[],swingT:null};
     batX=m.bx;
     showResult(m.j,m.res,m.state);
   }
@@ -359,7 +388,7 @@ function onData(m){
 function flush(){ // 演出を打ち切って次の投球待ちへ
   clearTimeout(timer);
   if(pend){state=pend;pend=null;}
-  toast(); cur=null; fa=null; phase='ready'; pitX=0; batX=-2.4;
+  toast(); cur=null; fa=null; phase='ready'; pitX=0; batX=homeX();
   held.pit.l=held.pit.r=held.bat.l=held.bat.r=0;
   if(inGame) render();
 }
@@ -373,11 +402,12 @@ function startGame(){
 function throwPitch(kind){
   if(phase!=='ready'||!state||state.over||!ctl('pit')) return;
   if(mode==='net'&&!(conn&&conn.open)) return;
-  const p={id:++pid+'-'+me,kind,x0:pitX};
+  const pp=pitchParams(state,kind);
+  const p={id:++pid+'-'+me,kind,x0:pitX,T:pp.T,vmax:pp.vmax,kmh:pp.kmh};
   send({t:'pitch',p}); beginPitch(p);
 }
 function beginPitch(p){
-  cur={id:p.id,kind:p.kind,x0:p.x0,t0:performance.now()+WIND,T:KINDS[p.kind].T,steer:[],swingT:null,resolved:false,lastDir:0};
+  cur={id:p.id,kind:p.kind,x0:p.x0,vmax:p.vmax,kmh:p.kmh,t0:performance.now()+WIND,T:p.T||KINDS[p.kind].T,steer:[],swingT:null,resolved:false,lastDir:0};
   phase='pitch'; toast(); padState();
 }
 function swing(){
@@ -387,7 +417,7 @@ function swing(){
 }
 function resolvePitch(){
   cur.resolved=true;
-  const j=judgePitch(cur,batX);
+  const j=judgePitch(cur,batX,batterOf(state));
   const ns=clone(state),res=applyEvent(ns,j.ev);
   send({t:'result',id:cur.id,j,res,state:ns,bx:batX});
   showResult(j,res,ns);
@@ -400,6 +430,7 @@ function showResult(j,res,ns){
   const reveal=()=>{
     state=pend||state; pend=null;
     let sub=res.sub;
+    if(!j.hit&&j.ev!=='foul'&&cur&&cur.kmh) sub=(sub?sub+' ':'')+cur.kmh+'km/h';
     toast(res.main,res.cls,sub);
     if(res.cls==='good'){beep(520,.09);setTimeout(()=>beep(780,.16),90);if(navigator.vibrate)navigator.vibrate(j.ev==='hr'?[60,40,120]:50);}
     else if(j.ev==='go'||j.ev==='fo') beep(200,.15,'triangle');
@@ -416,8 +447,16 @@ function showResult(j,res,ns){
     phase='after'; padState(); reveal();
   }
 }
+function doChange(t,remote){
+  if(!state||state.pi[t]!==0) return;
+  state.pi[t]=1; state.pc[t]=0;
+  if(!remote) send({t:'chg',team:t});
+  toast('ピッチャー交代','',TEAMS[t].pit[1].n);
+  clearTimeout(timer); timer=setTimeout(()=>{ if(phase==='ready') toast(); },1300);
+  render();
+}
 function next(){
-  toast(); cur=null; fa=null; pitX=0; batX=-2.4;
+  toast(); cur=null; fa=null; pitX=0; batX=homeX();
   if(state.over){phase='over';render();showOver();}
   else{phase='ready';render();}
 }
@@ -427,8 +466,8 @@ function showOver(){
   let t;
   if(w===-1) t='引き分け';
   else if(mode==='net') t=w===me?'あなたの勝ち!🎉':'あなたの負け…';
-  else t=(w===0?'先攻':'後攻')+'の勝ち!🎉';
-  modal('<h3>試合終了</h3><div class="fs">'+s.score[0]+' - '+s.score[1]+'</div><p class="note">先攻 - 後攻</p><h3>'+t+'</h3><button class="btn" id="mAgain">もう一度あそぶ</button><button class="btn sub" id="mQuit">タイトルへ</button>');
+  else t=TEAMS[w].name+'の勝ち!🎉';
+  modal('<h3>試合終了</h3><div class="fs">'+s.score[0]+' - '+s.score[1]+'</div><p class="note">'+TEAMS[0].name+' - '+TEAMS[1].name+'</p><h3>'+t+'</h3><button class="btn" id="mAgain">もう一度あそぶ</button><button class="btn sub" id="mQuit">タイトルへ</button>');
   $('mAgain').onclick=()=>{
     state=newState(s.innings); pend=null; $('modal').classList.add('hide'); flush(); send({t:'sync',state}); render();
   };
@@ -440,7 +479,7 @@ function update(now,dt){
   if(!state||state.over) return;
   if(phase==='ready'&&ctl('pit')) pitX=Math.max(-PIT_MAX,Math.min(PIT_MAX,pitX+dirOf('pit')*1.6*dt));
   if((phase==='ready'||(phase==='pitch'&&cur&&cur.swingT==null))&&ctl('bat'))
-    batX=Math.max(BAT_MIN,Math.min(BAT_MAX,batX+dirOf('bat')*2.4*dt));
+    { const Lh=batterOf(state).h==='L'; batX=Math.max(Lh?-BAT_MAX:BAT_MIN,Math.min(Lh?-BAT_MIN:BAT_MAX,batX+dirOf('bat')*2.4*dt)); }
   if(mode==='net'&&now-lastPos.at>70){
     lastPos.at=now;
     if(ctl('pit')&&pitX!==lastPos.pit){lastPos.pit=pitX;send({t:'pos',r:'pit',x:pitX});}
@@ -474,7 +513,7 @@ function render(){
   for(let i=1;i<=n;i++) h+='<th>'+i+'</th>';
   h+='<th>計</th></tr>';
   for(let t=0;t<2;t++){
-    const nm=(t===0?'先攻':'後攻')+(mode==='net'&&t===me?'(あなた)':'');
+    const nm=TEAMS[t].name+(mode==='net'&&t===me?'(あなた)':'');
     h+='<tr class="'+(!s.over&&s.half===t?'bat':'')+'"><td class="nm"><i style="background:'+TEAM[t]+'"></i>'+nm+'</td>';
     for(let i=0;i<n;i++){
       const v=s.line[t][i];
@@ -491,14 +530,16 @@ function render(){
   buildPads();
 }
 function padHTML(role){
-  const who=mode==='local'?(role==='pit'?'投手('+(state.half===0?'後攻':'先攻')+')':'打者('+(state.half===0?'先攻':'後攻')+')'):(role==='pit'?'投手':'打者');
+  const who=mode==='local'?(role==='pit'?'投手('+TEAMS[1-state.half].name+')':'打者('+TEAMS[state.half].name+')'):(role==='pit'?'投手':'打者');
   let h='<div class="pad" data-role="'+role+'"><div class="mv"><button data-h="l">◀</button><button data-h="r">▶</button></div><div class="act">';
   if(role==='pit') for(const k in KINDS) h+='<button class="throw" data-k="'+k+'">'+KINDS[k].name+'</button>';
   else h+='<button class="swing">スイング</button>';
-  return h+'</div></div><div class="hint">'+who+':'+(role==='pit'?'◀▶で立ち位置 → 投げたあと◀▶で曲げる':'◀▶で立ち位置 → タイミングよくスイング')+'</div>';
+  const ft=1-state.half;
+  const chg=role==='pit'&&state.pi[ft]===0?'<button class="chg">投手交代</button> ':'';
+  return h+'</div></div><div class="hint">'+chg+who+':'+(role==='pit'?'◀▶で立ち位置 → 投げたあと◀▶で曲げる':'◀▶で立ち位置 → タイミングよくスイング')+'</div>';
 }
 function buildPads(){
-  const key=mode+state.half+me+(state.over?'x':'');
+  const key=mode+state.half+me+(state.over?'x':'')+state.pi.join('');
   if(key!==padKey){
     padKey=key;
     held.pit.l=held.pit.r=held.bat.l=held.bat.r=0;
@@ -515,6 +556,7 @@ function buildPads(){
         ['pointerup','pointercancel','lostpointercapture'].forEach(n=>b.addEventListener(n,off));
       });
       pad.querySelectorAll('.throw').forEach(b=>b.addEventListener('pointerdown',e=>{e.preventDefault();throwPitch(b.dataset.k);}));
+      pad.parentNode.querySelectorAll('.chg').forEach(b=>b.onclick=()=>{ if(phase==='ready'&&ctl('pit')) doChange(1-state.half); });
       pad.querySelectorAll('.swing').forEach(b=>b.addEventListener('pointerdown',e=>{e.preventDefault();swing();}));
     });
     layout();
@@ -537,68 +579,145 @@ function layout(){
   G.W=r.width;G.H=r.height;
 }
 window.addEventListener('resize',layout);
-function guy(x,y,u,col){
-  const p=Math.max(2,Math.round(u/6));
-  const R=(dx,dy,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(Math.round(x+dx*p),Math.round(y+dy*p),w*p,h*p);};
-  R(-3,4,6,1,'rgba(0,0,0,.25)');
-  R(-2,2,2,2,'#333');R(0,2,2,2,'#333');
-  R(-2,-1,4,3,'#fff');R(-3,-1,1,2,col);R(2,-1,1,2,col);
-  R(-2,-4,4,3,'#f2c9a0');R(-2,-5,4,2,col);
+// ドット絵の選手。x,y は足もと、p は1ドットの大きさ
+function spr(x,y,p,o){
+  const col=o.col,face=o.face||'f',dir=o.dir||1,pose=o.pose||'stand',fr=o.fr||0;
+  const R=(dx,dy,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(Math.round(x+dx*p),Math.round(y+dy*p),Math.ceil(w*p),Math.ceil(h*p));};
+  const SK='#f2c9a0',WH='#f7f7f2',DK='#2a2a33',GL='#8a5a2b';
+  ctx.fillStyle='rgba(0,0,0,.28)';ctx.beginPath();ctx.ellipse(x,y,5.5*p,1.5*p,0,0,7);ctx.fill();
+  const leg=(dx,len)=>{R(dx,-5,2,len-2,WH);R(dx,len-7,2,1,col);R(dx,len-6,2,1,DK);};
+  let by=0;
+  if(pose==='crouch'){R(-4,-3,3,2,WH);R(1,-3,3,2,WH);R(-4,-1,3,1,DK);R(1,-1,3,1,DK);by=2;}
+  else if(pose==='run'){leg(-3,fr?3:5);leg(1,fr?5:3);}
+  else if(pose==='kick'){leg(-3,5);R(1,-6,4,2,WH);R(5,-6,1,2,DK);}
+  else if(pose==='throw'){leg(-4,5);leg(2,5);by=1;}
+  else {leg(-3,5);leg(1,5);}
+  const b0=-11+by,h0=b0-5;
+  R(-3,b0,6,6,WH);R(-3,b0+5,6,1,DK);
+  if(face==='b') R(-1,b0+1,2,3,col); else R(-3,b0,6,1,col);
+  R(-3,h0,6,5,SK);
+  if(face==='b'){R(-3,h0-1,6,4,col);R(-3,h0+3,6,1,DK);}
+  else if(face==='s'){R(-3,h0-1,6,o.helmet?4:3,col);R(dir>0?3:-5,h0+1,2,1,col);R(dir>0?1:-2,h0+3,1,1,DK);if(o.helmet)R(dir>0?-3:1,h0+3,2,1,col);}
+  else {R(-3,h0-1,6,3,col);R(-4,h0+1,8,1,col);R(-2,h0+3,1,1,DK);R(1,h0+3,1,1,DK);}
+  switch(pose){
+    case 'set': R(-5,b0,2,3,col);R(3,b0,2,3,col);R(-2,b0+2,4,3,GL);break;
+    case 'wind': R(-4,h0-3,2,4,col);R(2,h0-3,2,4,col);R(-2,h0-5,4,3,GL);break;
+    case 'kick': R(3,b0,5,2,col);R(8,b0,1,2,SK);R(9,b0,1,1,'#fff');R(-5,b0,2,3,col);R(-6,b0+2,3,3,GL);break;
+    case 'throw': R(3,b0+1,2,5,col);R(3,b0+6,2,2,SK);R(-5,b0,2,3,col);R(-6,b0+2,3,3,GL);break;
+    case 'bat': R(dir>0?0:-3,b0+1,3,2,col);R(dir>0?3:-5,b0+1,2,2,SK);break;
+    case 'catch': R(-5,h0-1,2,5,col);R(-6,h0-4,3,3,GL);R(3,b0,2,2,col);R(3,b0+2,2,2,SK);break;
+    case 'crouch': R(-5,b0,2,3,col);R(3,b0,2,3,col);R(4,b0+1,3,3,GL);break;
+    case 'run': R(-5,b0+(fr?1:0),2,2,col);R(-5,b0+2+(fr?1:0),2,2,SK);R(3,b0+(fr?0:1),2,2,col);R(3,b0+2+(fr?0:1),2,2,SK);break;
+    default: R(-5,b0,2,2,col);R(-5,b0+2,2,2,SK);R(3,b0,2,2,col);R(3,b0+2,2,2,SK);
+  }
 }
 function ball(x,y,r,sh){
   if(sh!=null){ctx.fillStyle='rgba(0,0,0,.3)';ctx.beginPath();ctx.ellipse(x,sh,r,r*.5,0,0,7);ctx.fill();}
   ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();
   ctx.strokeStyle='#c33';ctx.lineWidth=Math.max(1,r*.2);ctx.beginPath();ctx.arc(x,y,r*.6,.3,2.2);ctx.stroke();
 }
-function grass(){
-  const {W,H}=G;
-  ctx.fillStyle='#2a8a48';ctx.fillRect(0,0,W,H);
-  ctx.fillStyle='rgba(255,255,255,.05)';
-  for(let i=0;i<10;i+=2) ctx.fillRect(0,H*i/10,W,H/10);
+// 観客席(色つきの点がちらちら動く)
+const CROWD=['#e8e2d0','#d9534f','#4f8fd9','#f0c040','#7a7a88','#ffffff','#c97b3a'];
+function crowdRect(x,y,w,h,now,hot){
+  ctx.fillStyle='#1b2438';ctx.fillRect(x,y,w,h);
+  const q=6,tk=Math.floor(now/(hot?90:420));
+  for(let j=0;j*q<h;j++) for(let i=0;i*q<w;i++){
+    const k=(i*7+j*13+((i*j)%5)+(((i+j*3+tk)%9)===0?tk:0))%CROWD.length;
+    ctx.fillStyle=CROWD[k];ctx.fillRect(x+i*q+(j%2?3:0),y+j*q+1,3,3);
+  }
+}
+function bar(x,y,w,v,c){ctx.fillStyle='rgba(255,255,255,.2)';ctx.fillRect(x,y,w,5);ctx.fillStyle=c;ctx.fillRect(x,y,Math.max(0,w*v),5);}
+function hud(){
+  const {W,H}=G,b=batterOf(state),pt=pitcherOf(state),st=pitchParams(state,'fast').st;
+  ctx.textBaseline='top';
+  // 投手(右上)
+  ctx.fillStyle='rgba(11,20,34,.78)';ctx.fillRect(W-128,H*.17,120,40);
+  ctx.fillStyle='#fff';ctx.font='700 13px sans-serif';ctx.textAlign='left';
+  ctx.fillText('投 '+pt.n,W-121,H*.17+5);
+  ctx.font='600 10px sans-serif';ctx.fillStyle='#9fb3cc';ctx.fillText('スタミナ',W-121,H*.17+25);
+  bar(W-74,H*.17+28,58,st,st<.4?'#ff5a4f':'#39d353');
+  // 打者(左下)
+  const y=H*.17;
+  ctx.fillStyle='rgba(11,20,34,.78)';ctx.fillRect(8,y,132,56);
+  ctx.fillStyle='#fff';ctx.font='700 13px sans-serif';
+  ctx.fillText((state.bi[state.half]+1)+'番 '+b.n+(b.h==='L'?'(左)':''),15,y+5);
+  ctx.font='600 10px sans-serif';
+  [['パワー',b.P,'#ff8a5a'],['ミート',b.M,'#ffd24a'],['走力',b.S,'#5ac8ff']].forEach((r,i)=>{
+    ctx.fillStyle='#9fb3cc';ctx.fillText(r[0],15,y+23+i*10);bar(58,y+26+i*10,72,r[1]/10,r[2]);
+  });
 }
 function drawDuel(now){
-  const {W,H}=G,u=Math.min(W/10,H/9),cx=W/2,py=H*.74,my=H*.2;
-  const fld=TEAM[1-state.half],bat=TEAM[state.half];
-  grass();
+  const {W,H}=G,u=Math.min(W/10,H/9),cx=W/2,py=H*.72,my=H*.3;
+  const fld=TEAM[1-state.half],bat=TEAM[state.half],b=batterOf(state),Lh=b.h==='L',sg=Lh?-1:1;
+  const hot=cur&&cur.ev==='hr';
+  // 芝
+  ctx.fillStyle='#2a8a48';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(255,255,255,.05)';
+  for(let i=0;i<12;i+=2) ctx.fillRect(0,H*i/12,W,H/12);
+  // 内野の土とファウルライン
   ctx.fillStyle='#b98654';
-  ctx.beginPath();ctx.ellipse(cx,my+u*.5,u*1.9,u*1.0,0,0,7);ctx.fill();
+  ctx.beginPath();ctx.moveTo(cx,py+u*1.5);ctx.lineTo(cx-W,py+u*1.5-W);ctx.lineTo(cx-W+u*2.2,py+u*1.5-W-u*2.2);ctx.lineTo(cx,py-u*2.9);
+  ctx.lineTo(cx+W-u*2.2,py+u*1.5-W-u*2.2);ctx.lineTo(cx+W,py+u*1.5-W);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#2a8a48';ctx.beginPath();ctx.moveTo(cx,py-u*3.4);ctx.lineTo(cx-W,py-u*3.4-W);ctx.lineTo(cx+W,py-u*3.4-W);ctx.closePath();ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,.05)';ctx.fillRect(0,0,W,H*.16);
+  ctx.strokeStyle='#fff';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(cx-u*1.2,py-u*.2);ctx.lineTo(cx-W,py-u*.2-W+u*1.2);ctx.moveTo(cx+u*1.2,py-u*.2);ctx.lineTo(cx+W,py-u*.2-W+u*1.2);ctx.stroke();
+  // 外野フェンスと観客席
+  crowdRect(0,0,W,H*.09,now,hot);
+  ctx.fillStyle='#14532d';ctx.fillRect(0,H*.09,W,H*.035);
+  ctx.fillStyle='#f5d76e';ctx.fillRect(0,H*.09,W,3);
+  // マウンド・ホーム
+  ctx.fillStyle='#b98654';
+  ctx.beginPath();ctx.ellipse(cx,my+u*.2,u*1.9,u*1.0,0,0,7);ctx.fill();
   ctx.beginPath();ctx.arc(cx,py,u*4.4,0,7);ctx.fill();
-  ctx.fillStyle='#fff';ctx.fillRect(cx-u*.5,my+u*.75,u,u*.14);
-  // バッターボックスとベース
+  ctx.fillStyle='#a37446';ctx.beginPath();ctx.ellipse(cx,my+u*.2,u*1.2,u*.6,0,0,7);ctx.fill();
+  ctx.fillStyle='#fff';ctx.fillRect(cx-u*.5,my+u*.2,u,u*.14);
   ctx.strokeStyle='#fff';ctx.lineWidth=2;
   ctx.strokeRect(cx-u*3.7,py-u*1.5,u*2.4,u*3);ctx.strokeRect(cx+u*1.3,py-u*1.5,u*2.4,u*3);
   ctx.fillStyle='#fff';ctx.beginPath();
   ctx.moveTo(cx-u,py-u*.35);ctx.lineTo(cx+u,py-u*.35);ctx.lineTo(cx+u,py+u*.2);ctx.lineTo(cx,py+u*.75);ctx.lineTo(cx-u,py+u*.2);ctx.closePath();ctx.fill();
-  guy(cx,py+u*2.3,u,fld);            // 捕手
   // 投手
-  const tp=cur?now-cur.t0:null;
+  const tp=cur?now-cur.t0:null,pp=u/8.5,bp=u/6;
   const px=cx+(cur?cur.x0:pitX)*u;
-  guy(px,my,u,fld);
-  if(cur&&tp<0){ const k=1+tp/WIND; ball(px+u*.55,my-u*.2-k*u*.5,u*.13); }
-  // 打者とバット
-  const bx=cx+batX*u;
-  guy(bx,py,u*1.15,bat);
-  let a=100;
-  if(cur&&cur.swingT!=null){ const s=Math.max(0,Math.min(1,(tp-cur.swingT)/SW)); a=115-195*s; }
-  const hx=bx+u*.45,rad=a*Math.PI/180,L=u*2.55;
-  ctx.strokeStyle='#5b3a1a';ctx.lineWidth=u*.26;ctx.lineCap='round';
-  ctx.beginPath();ctx.moveTo(hx,py);ctx.lineTo(hx+Math.cos(rad)*L,py+Math.sin(rad)*L);ctx.stroke();
-  ctx.strokeStyle='#e9c98a';ctx.lineWidth=u*.16;
-  ctx.beginPath();ctx.moveTo(hx+Math.cos(rad)*L*.25,py+Math.sin(rad)*L*.25);ctx.lineTo(hx+Math.cos(rad)*L,py+Math.sin(rad)*L);ctx.stroke();
-  // ボール
+  let pose='set';
+  if(cur){ pose=tp<-420?'wind':tp<-70?'kick':tp<260?'throw':'set'; }
+  spr(px,my+u*.2,pp,{col:fld,pose});
+  // ボール(バットより奥)
+  let bx=null,byy=null,br=0;
   if(cur&&tp>=0){
-    const y0=my+u*.3;
+    const y0=my-u*.3;
     if(tp<cur.T||!cur.resolved||cur.ev==='look'||cur.ev==='ball'||cur.ev==='miss'||cur.ev==='hbp'){
       const tt=Math.min(tp,cur.T),g=prog(cur.kind,tt/cur.T);
-      const x=cx+(tp<cur.T?ballX(cur,tt):(cur.px!=null?cur.px:ballX(cur,cur.T)))*u;
-      let y=y0+(py-y0)*g;
-      if(tp>cur.T) y=py+Math.min(1,(tp-cur.T)/180)*u*2.0;
-      if(!(tp>cur.T+500)) ball(x,y-u*.25,u*(.17+.07*g),y+u*.12);
+      bx=cx+(tp<cur.T?ballX(cur,tt):(cur.px!=null?cur.px:ballX(cur,cur.T)))*u;
+      byy=y0+(py-y0)*g;
+      if(tp>cur.T) byy=py+Math.min(1,(tp-cur.T)/180)*u*2.2;
+      br=u*(.15+.09*g);
+      if(tp>cur.T+500) bx=null;
     }else if(cur.ev==='foul'){
       const k=(now-cur.resAt)/450;
-      if(k<1) ball(cx+cur.px*u+cur.side*k*W*.7,py-k*u*1.5,u*.24);
+      if(k<1){bx=cx+cur.px*u+cur.side*k*W*.7;byy=py-k*u*1.5;br=u*.24;}
     }
   }
+  // 打者とバット
+  const X=cx+batX*u,bob=cur?0:Math.round(Math.sin(now/260))*1;
+  let a=100+(cur?0:Math.sin(now/260)*6),sw=0;
+  if(cur&&cur.swingT!=null){ sw=Math.max(0,Math.min(1,(tp-cur.swingT)/SW)); a=115-195*sw; }
+  spr(X+sg*sw*u*.25,py+bp*8+bob,bp,{col:bat,face:'s',dir:sg,pose:'bat',helmet:1});
+  if(bx!=null) ball(bx,byy-u*.25,br,byy+u*.12);
+  const hx=X+sg*u*.45,rad=a*Math.PI/180,L=u*2.55,ex=hx+sg*Math.cos(rad)*L,ey=py+Math.sin(rad)*L;
+  ctx.lineCap='round';
+  ctx.strokeStyle='#3d2610';ctx.lineWidth=u*.3;ctx.beginPath();ctx.moveTo(hx,py);ctx.lineTo(ex,ey);ctx.stroke();
+  ctx.strokeStyle='#e9c98a';ctx.lineWidth=u*.19;
+  ctx.beginPath();ctx.moveTo(hx+(ex-hx)*.22,py+(ey-py)*.22);ctx.lineTo(ex,ey);ctx.stroke();
+  if(sw>0&&sw<1){ // スイングの残像
+    ctx.strokeStyle='rgba(255,255,255,.25)';ctx.lineWidth=u*.5;ctx.beginPath();
+    const a0=115*Math.PI/180;
+    if(sg>0) ctx.arc(hx,py,L*.8,rad,a0); else ctx.arc(hx,py,L*.8,Math.PI-a0,Math.PI-rad);
+    ctx.stroke();
+  }
+  // 捕手
+  spr(cx,py+u*3.1,bp,{col:fld,face:'b',pose:'crouch'});
+  hud();
 }
 // 守備画面
 const FLD=[{a:0,d:18},{a:0,d:-3},{a:38,d:29},{a:14,d:38},{a:-14,d:38},{a:-38,d:29},{a:-27,d:74},{a:0,d:80},{a:27,d:74}];
@@ -611,52 +730,72 @@ function makeField(j,now){
   let fi=cand[0],best=1e9;
   for(const i of cand){const p=mxy(FLD[i].a,FLD[i].d),dd=Math.hypot(p.x-L.x,p.y-L.y);if(dd<best){best=dd;fi=i;}}
   const tf=h.kind==='gnd'?500+h.D*14:900+h.D*11;
-  const end=tf+(ev==='go'?550:ev==='hr'?1300:450);
+  const end=tf+(ev==='go'?550:ev==='hr'?1500:450);
   const n={h1:1,h2:2,h3:3,hr:4}[ev]||0;
   const runners=[{from:0,n:n||(ev==='go'?.9:.5)}];
   state.bases.forEach((b,i)=>{ if(b) runners.push({from:i+1,n}); });
   return {t0:now,hit:h,ev,L,fi,tf,end,runners};
 }
 function drawField(now){
-  const {W,H}=G,m=Math.min(W*.66,H*.76)/100,hx=W/2,hy=H*.9;
+  const {W,H}=G,m=Math.min(W*.64,H*.72)/100,hx=W/2,hy=H*.9;
   const P=p=>({x:hx+p.x*m,y:hy-p.y*m});
   const fld=TEAM[1-state.half],bat=TEAM[state.half];
-  ctx.fillStyle='#1d5e33';ctx.fillRect(0,0,W,H);
-  // 外野(扇形)
-  ctx.fillStyle='#2a8a48';ctx.beginPath();ctx.moveTo(hx,hy);ctx.arc(hx,hy,100*m,-Math.PI*.75,-Math.PI*.25);ctx.closePath();ctx.fill();
-  ctx.strokeStyle='#f5d76e';ctx.lineWidth=4;ctx.beginPath();ctx.arc(hx,hy,100*m,-Math.PI*.75,-Math.PI*.25);ctx.stroke();
+  const t=now-fa.t0,h=fa.hit,u=Math.min(1,t/fa.tf),sp=Math.max(1.4,m*.62),fr=Math.floor(now/110)%2;
+  const hot=fa.ev==='hr'&&t>fa.tf*.8;
+  const A0=-Math.PI*.75,A1=-Math.PI*.25;
+  // スタンド
+  ctx.fillStyle='#0f1b2d';ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.beginPath();ctx.moveTo(hx,hy);ctx.arc(hx,hy,122*m,A0-.06,A1+.06);ctx.closePath();ctx.clip();
+  crowdRect(0,Math.max(0,hy-124*m),W,124*m,now,hot);ctx.restore();
+  // フェンス・外野・ウォーニングゾーン
+  ctx.fillStyle='#14532d';ctx.beginPath();ctx.moveTo(hx,hy);ctx.arc(hx,hy,104*m,A0-.03,A1+.03);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#b98654';ctx.beginPath();ctx.moveTo(hx,hy);ctx.arc(hx,hy,100*m,A0,A1);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#2a8a48';ctx.beginPath();ctx.moveTo(hx,hy);ctx.arc(hx,hy,94*m,A0,A1);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.06)';ctx.lineWidth=7*m;
+  for(let r=56;r<94;r+=14){ctx.beginPath();ctx.arc(hx,hy,r*m,A0,A1);ctx.stroke();}
+  ctx.strokeStyle='#f5d76e';ctx.lineWidth=3;ctx.beginPath();ctx.arc(hx,hy,100*m,A0,A1);ctx.stroke();
   // 内野
-  ctx.fillStyle='#b98654';ctx.beginPath();ctx.moveTo(hx,hy);ctx.arc(hx,hy,46*m,-Math.PI*.75,-Math.PI*.25);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#b98654';ctx.beginPath();ctx.moveTo(hx,hy);ctx.arc(hx,hy,46*m,A0,A1);ctx.closePath();ctx.fill();
+  ctx.beginPath();ctx.arc(hx,hy,5*m,0,7);ctx.fill();
   ctx.fillStyle='#2a8a48';ctx.beginPath();
   [mxy(0,5),mxy(45,23.5),mxy(0,33),mxy(-45,23.5)].forEach((b,i)=>{const p=P(b);i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);});ctx.closePath();ctx.fill();
+  ctx.fillStyle='#b98654';{const p=P(mxy(0,18));ctx.beginPath();ctx.arc(p.x,p.y,3.2*m,0,7);ctx.fill();}
   ctx.strokeStyle='#fff';ctx.lineWidth=2;
   [45,-45].forEach(a=>{const p=P(mxy(a,100));ctx.beginPath();ctx.moveTo(hx,hy);ctx.lineTo(p.x,p.y);ctx.stroke();});
   ctx.fillStyle='#fff';
   BASES.slice(0,4).forEach(b=>{const p=P(b);ctx.fillRect(p.x-4,p.y-4,8,8);});
-  const t=now-fa.t0,h=fa.hit,u=Math.min(1,t/fa.tf),su=m*6.5;
-  // 守備
+  // 守備(奥から順に描く)
+  const out=fa.ev==='go'||fa.ev==='fo';
+  const k=out?Math.min(1,u*1.15):Math.min(1,t/(fa.tf+400));
+  const list=[];
   FLD.forEach((f,i)=>{
-    let p=mxy(f.a,f.d);
-    if(i===fi()){
-      const out=fa.ev==='go'||fa.ev==='fo';
-      const k=out?Math.min(1,u*1.15):Math.min(1,t/(fa.tf+400));
+    let p=mxy(f.a,f.d),pose=i===1?'crouch':'stand',face=i===1?'b':'f';
+    if(i===fa.fi){
       p={x:p.x+(fa.L.x-p.x)*k,y:p.y+(fa.L.y-p.y)*k};
+      pose=k<1?'run':(fa.ev==='fo'?'catch':'stand');
     }
-    const q=P(p);guy(q.x,q.y,su,fld);
+    list.push({p,o:{col:fld,pose,face,fr}});
   });
-  function fi(){return fa.fi;}
-  // 走者
   const ur=Math.min(1,t/fa.end);
-  fa.runners.forEach(r=>{const q=P(pathPos(r.from+r.n*ur));guy(q.x,q.y,su,bat);});
+  fa.runners.forEach(r=>list.push({p:pathPos(r.from+r.n*ur),o:{col:bat,pose:ur<1?'run':'stand',face:'s',dir:1,helmet:1,fr}}));
+  list.sort((a,b)=>b.p.y-a.p.y).forEach(e=>{const q=P(e.p);spr(q.x,q.y,sp,e.o);});
   // ボール
-  const d=h.kind==='gnd'?h.D*(1-(1-u)*(1-u)):(fa.ev==='hr'?h.D*u*1.05:h.D*u);
+  const d=h.kind==='gnd'?h.D*(1-(1-u)*(1-u)):(fa.ev==='hr'?h.D*u*1.08:h.D*u);
   let bp=mxy(h.ang,d),hgt=h.kind==='fly'?Math.sin(Math.PI*Math.min(1,u))*h.D*.45*m:0;
   if(t>fa.tf){
-    if(fa.ev==='go'){const k=Math.min(1,(t-fa.tf)/450);bp={x:fa.L.x+(BASES[1].x-fa.L.x)*k,y:fa.L.y+(BASES[1].y-fa.L.y)*k};hgt=Math.sin(Math.PI*k)*8*m;}
-    else if(fa.ev==='hr') return;
-    else {bp=fa.L;hgt=0;}
+    if(fa.ev==='go'){const kk=Math.min(1,(t-fa.tf)/450);bp={x:fa.L.x+(BASES[1].x-fa.L.x)*kk,y:fa.L.y+(BASES[1].y-fa.L.y)*kk};hgt=Math.sin(Math.PI*kk)*8*m;}
+    else if(fa.ev==='hr') bp=null;
+    else {bp=fa.L;hgt=fa.ev==='fo'?sp*14:0;}
   }
-  const q=P(bp);ball(q.x,q.y-hgt-4,3+hgt*.03+m*1.2,q.y);
+  if(bp){const q=P(bp);ball(q.x,q.y-hgt-4,3+hgt*.03+m*1.2,q.y);}
+  if(hot){ // ホームランの花火
+    for(let i=0;i<3;i++){
+      const ph=((t-fa.tf*.8)/700+i*.37)%1,fx=W*(.25+.25*i),fy=H*.12+i%2*H*.06;
+      ctx.fillStyle=CROWD[(i*2+3)%CROWD.length];
+      for(let a=0;a<12;a++){const r=ph*46;ctx.globalAlpha=1-ph;ctx.fillRect(fx+Math.cos(a*.524)*r,fy+Math.sin(a*.524)*r,4,4);}
+      ctx.globalAlpha=1;
+    }
+  }
 }
 let lastT=0;
 function frame(now){
